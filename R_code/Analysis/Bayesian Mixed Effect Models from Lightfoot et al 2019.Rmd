@@ -1,0 +1,195 @@
+---
+title: "Bayesian Mixed Effect Models from Lightfoot et al 2019"
+author: "Danny Buss"
+date: "13/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+This is an R Markdown document. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+WARNING - This code has some large processes and could take several hours to run. 
+
+Load required packages:
+```{r}
+library(parallel)
+library(coda)
+library(MCMCglmm)
+library(ggplot2)
+library(lattice)
+library(latticeExtra)
+library(dplyr)
+library(reshape2)
+library(lme4)
+library(nlme)
+```
+Load dataframe:
+```{r}
+df <-read.csv("Data.csv")
+```
+
+Load functions:
+
+We would like to thank XXX and XXX for making the following functions openly available on the following github. 
+
+```{r}
+plot.estimates <- function(x) {
+    if (class(x) != "summary.mcmc")
+      x <- summary(x)
+    n <- dim(x$statistics)[1]
+    par(mar=c(2,13,4,1))
+    plot(x$statistics[,1], n:1,
+         yaxt = 'n', ylab='',
+         xlim=range(x$quantiles)*1.2,
+         pch=19,
+         main='Posterior means and 95% credible intervals')
+    grid()
+    axis(2, at=n:1, rownames(x$statistics), las=2)
+    arrows(x$quantiles[,1], n:1, x$quantiles[,5], n:1, code=0)
+    abline(v=0, lty=2)
+}
+
+trace.plots<-function(x) {
+  n <- dim(x)[2]
+  par(mfrow=c(ceiling(n/2),2), mar=c(0,0.5,1,0.5))
+  for (i in 1:n) {
+    plot(as.numeric(x[,i]), t="l", main=colnames(x)[i], xaxt="n", yaxt="n")
+  }
+}
+
+mu.link<-function(weight) post$a + post$b*weight
+
+plot.acfs <- function(x) {
+  n <- dim(x)[2]
+  par(mfrow=c(ceiling(n/2),2), mar=c(3,2,3,0))
+  for (i in 1:n) {
+    acf(x[,i], lag.max=100, main=colnames(x)[i])
+    grid()
+  }
+}
+```
+
+#Bayesian Mixed-Effect Models
+For ease to the user, this code shows only optimal(s) models as examples. For a list of all models run, please see the following document.
+
+Set MCMC parameters:
+Note - All models ran three MCMC chains in parallel, which are used to check for model output and convergence consistency
+```{r}
+##Set MCMC parameters
+#no. of interations
+nitt <- c(500000)
+#length of burnin
+burnin <- c(10000)
+#amount of thinning
+thin <- c(245)
+```
+#Paired-site model
+This sections shows the optimal models for the 'paired-site model' that resembles two grave sites, one dated to the Early modern and one dated to the Late Mediaeval, from the modern town of Koprvino. 
+
+Subset data:
+```{r}
+paired<-df[df$Site=="Koprivno"|df$Site=="Koprivno-Kod križa",]
+```
+
+Paired-site model for Nitrogen of Bone Collagen:
+The optimal model for nitrogen of bone collagen was a simple model of TimePeriod without Sex (DIC = 60.9)
+
+Check residuals for normality with qqplots:
+```{r}
+
+```
+
+Load priors:
+```{r}
+yfixed <- diag(2) * 1e+03
+ps_prior<- list(B = list(mu = rep(0, 2),V = yfixed), 
+                R = list(V = 1, nu = 0.002))
+```
+Run model and printout DIC:
+```{r}
+Paired_site_NColl<-mclapply(1:3, function(i){
+  MCMCglmm(d15Ncoll~TimePeriod,
+           rcov=~ units, 
+           family="gaussian",
+           data=paired,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=ps_prior)
+}, mc.cores=3)
+
+a<-c(paste("DIC for paired site NColl is:"),round(Paired_site_NColl[[1]]$DIC, digits=2))
+print(a)
+```
+Group chains, compute summary statistics and perform convergence checks:
+```{r}
+Paired_site_NColl <- lapply(Paired_site_NColl, function(m) m$Sol)
+Paired_site_NColl <- do.call(mcmc.list, Paired_site_NColl)
+```
+
+Paired-site model for Carbon of Bone Collagen:
+```{r}
+yfixed <- diag(4) * 1e+03
+ps_prior<- list(B = list(mu = rep(0, 4),V = yfixed), 
+                R = list(V = 1, nu = 0.002))
+
+Paired_site_NColl<-mclapply(1:3, function(i){
+  MCMCglmm(d15Ncoll~TimePeriod + Sex,
+           rcov=~ units, 
+           family="gaussian",
+           data=paired,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=ps_prior)
+}, mc.cores=3)
+```
+
+Paired-site model for Carbon of Bone Carbonate:
+```{r}
+Paired_site_NColl<-mclapply(1:3, function(i){
+  MCMCglmm(d15Ncoll~TimePeriod + Sex,
+           rcov=~ units, 
+           family="gaussian",
+           data=paired,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=ps_prior)
+}, mc.cores=3)
+```
+
+#TimePeriod model
+Table 1
+```{r}
+
+```
+#Site model
+Table 1
+```{r}
+
+```
+#Plots
+Table 1
+```{r}
+
+```
+
+#Variances - Levene's test
+
+```{r}
+
+```
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
