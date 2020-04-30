@@ -1,5 +1,5 @@
 ---
-title: "Bayesian Mixed Effect Models from Lightfoot et al 2019"
+title: "Bayesian Mixed Effect Models from Lightfoot et al 2020"
 author: "Danny Buss"
 date: "13/10/2019"
 output: html_document
@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ## R Markdown
 This is an R Markdown document. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-WARNING - This code has some large processes and could take several hours to run. 
+WARNING - This code has some large processes and could take several hours to run if iterations are increased or volume of data. 
 
 Load required packages:
 ```{r}
@@ -26,10 +26,16 @@ library(dplyr)
 library(reshape2)
 library(lme4)
 library(nlme)
+library(grid)
+library(basicMCMCplots)
+library(ggthemr)
+library(emmeans)
+library(tidybayes)
 ```
-Load dataframe:
+Load dataframe: Note - need to edit this to load from github once 
 ```{r}
 df <-read.csv("Data.csv")
+ggthemr("dust")
 ```
 
 Load functions:
@@ -71,10 +77,24 @@ plot.acfs <- function(x) {
     grid()
   }
 }
+
+sim.pred = function(N, post.samp){
+  index <- sample(dim(post.samp)[1],N,replace = T) 
+  samp <- post.samp[index,]
+  y.pred <- matrix(0, nrow = N, ncol = length(data))
+  for(i in 1:N){
+    y.pred[i,] <-   rnorm(1,samp[i,1],samp[i,2])
+  }
+  return(y.pred)
+}
 ```
 
-#Bayesian Mixed-Effect Models
-For ease to the user, this code shows only optimal(s) models as examples. For a list of all models run, please see the following document.
+#Correlations and Levene's tests
+```{r}
+
+```
+#Mixed-Effect Models Start Here
+For ease to the user, this code shows only optimal(s) models as examples. For a list of all models run, please see Table 1 in Appendix 3.
 
 Set MCMC parameters:
 Note - All models ran three MCMC chains in parallel, which are used to check for model output and convergence consistency
@@ -87,21 +107,17 @@ burnin <- c(10000)
 #amount of thinning
 thin <- c(245)
 ```
-#Paired-site model
+#Paired-site model - Nitrogen
 This sections shows the optimal models for the 'paired-site model' that resembles two grave sites, one dated to the Early modern and one dated to the Late Mediaeval, from the modern town of Koprvino. 
 
 Subset data:
 ```{r}
 paired<-df[df$Site=="Koprivno"|df$Site=="Koprivno-Kod križa",]
+ggplot(paired,aes(y=d15Ncoll,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ncoll")) + theme(legend.position = "none")
 ```
 
 Paired-site model for Nitrogen of Bone Collagen:
-The optimal model for nitrogen of bone collagen was a simple model of TimePeriod without Sex (DIC = 60.9)
-
-Check residuals for normality with qqplots:
-```{r}
-
-```
+Note - The optimal model for nitrogen of bone collagen was a simple model of TimePeriod without Sex (DIC = 60.9)
 
 Load priors:
 ```{r}
@@ -122,23 +138,92 @@ Paired_site_NColl<-mclapply(1:3, function(i){
            prior=ps_prior)
 }, mc.cores=3)
 
-a<-c(paste("DIC for paired site NColl is:"),round(Paired_site_NColl[[1]]$DIC, digits=2))
+a<-c(paste("DIC for paired site NColl is:"),round(mean(c(Paired_site_NColl[[1]]$DIC,Paired_site_NColl[[2]]$DIC,
+                                                    Paired_site_NColl[[3]]$DIC)),digits=2))
 print(a)
+
+b<-c(paste("Mean Deviance for paired site NColl is:"),round(mean(c(Paired_site_NColl[[1]]$Deviance,Paired_site_NColl[[2]]$Deviance,
+                                                    Paired_site_NColl[[3]]$Deviance)),digits=2))
+print(b)
 ```
-Group chains, compute summary statistics and perform convergence checks:
+Plot MCMC traceplots, save as files, remove intercept to make plots easier to interpret
+
+```{r}
+Paired_site_NColl<-mclapply(1:3, function(i){
+  MCMCglmm(d15Ncoll~TimePeriod-1,
+           rcov=~ units, 
+           family="gaussian",
+           data=paired,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=ps_prior)
+}, mc.cores=3)
+
+c<-list(Paired_site_NColl[[1]]$Sol,Paired_site_NColl[[2]]$Sol,Paired_site_NColl[[3]]$Sol)
+d<-list(Paired_site_NColl[[1]]$VCV,Paired_site_NColl[[2]]$VCV,Paired_site_NColl[[3]]$VCV)
+#Plot to console
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+```
+Save to file
+```{r}
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.5, scale=TRUE, file="PairedSites_Nitrogen_Fixed.pdf")
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.5, file="PairedSites_Nitrogen_residual.pdf")
+rm(a,b,c,d)
+```
+Plot difference in TimePeriods for Nitrogen plot
+```{r}
+a<-MCMCglmm(d15Ncoll~TimePeriod-1,
+         rcov=~ units, 
+         family="gaussian",
+         data=paired,
+         nitt=nitt,
+         burnin=burnin,
+         thin=thin,
+         prior=ps_prior)
+
+b<-a %>%
+  emmeans(~TimePeriod, data=paired) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{15} ~"Ncoll")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Pairedsite_nitrogen_modelout.pdf",width = 6, height = 2)
+rm(a,b)
+```
+Model check plots and posterior predictive checks
+"A simple QQplot of the posterior density of parameter estimates (estimated from our MCMC sampling) versus a normal distribution will have diagnostic power analogous to analyzing residuals."
+Check 'residuals for normality' in bayesian-like with with qqplots: NDY
+```{r}
+set.seed(245)
+norm<-rnorm(2000,0,1)
+predict.MCMCglmm(Paired_site_NColl[[1]])
+plot(paired$TimePeriod,paired$d15Ncoll)
+hist(xsim)
+```
+Compute summary statistics and perform convergence checks across the 3 chains:
 ```{r}
 Paired_site_NColl <- lapply(Paired_site_NColl, function(m) m$Sol)
 Paired_site_NColl <- do.call(mcmc.list, Paired_site_NColl)
 ```
-
-Paired-site model for Carbon of Bone Collagen:
+#Paired-site model for Carbon of Bone Collagen:
+basic raw data plot
 ```{r}
-yfixed <- diag(4) * 1e+03
-ps_prior<- list(B = list(mu = rep(0, 4),V = yfixed), 
+paired$tpsx<-paste(paired$TimePeriod,paired$Sex)
+ggplot(paired,aes(y=d13Ccoll,x=tpsx,fill=tpsx)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{13} ~"Ccoll")) + theme(legend.position = "none")
+```
+mcmc model
+```{r}
+yfixed <- diag(2) * 1e+03
+ps_prior<- list(B = list(mu = rep(0, 2),V = yfixed), 
                 R = list(V = 1, nu = 0.002))
 
-Paired_site_NColl<-mclapply(1:3, function(i){
-  MCMCglmm(d15Ncoll~TimePeriod + Sex,
+Paired_site_Ccarb<-mclapply(1:3, function(i){
+  MCMCglmm(d13Ccarb~TimePeriod,
            rcov=~ units, 
            family="gaussian",
            data=paired,
@@ -147,12 +232,21 @@ Paired_site_NColl<-mclapply(1:3, function(i){
            thin=thin,
            prior=ps_prior)
 }, mc.cores=3)
+
+a<-c(paste("DIC for paired site Ccarb is:"),round(mean(c(Paired_site_Ccarb[[1]]$DIC,Paired_site_Ccarb[[2]]$DIC,
+                                                    Paired_site_Ccarb[[3]]$DIC)),digits=2))
+print(a)
+
+b<-c(paste("Mean Deviance for paired site Ccarb is:"),round(mean(c(Paired_site_Ccarb[[1]]$Deviance,Paired_site_Ccarb[[2]]$Deviance,
+                                                    Paired_site_Ccarb[[3]]$Deviance)),digits=2))
+print(b)
 ```
 
-Paired-site model for Carbon of Bone Carbonate:
+Plot MCMC traceplots, save as files, remove intercept to make plots easier for reader to interpret
+#PairedSitesModel_Ccarb
 ```{r}
-Paired_site_NColl<-mclapply(1:3, function(i){
-  MCMCglmm(d15Ncoll~TimePeriod + Sex,
+Paired_site_Ccarb_plots<-mclapply(1:3, function(i){
+  MCMCglmm(d13Ccarb~TimePeriod-1,
            rcov=~ units, 
            family="gaussian",
            data=paired,
@@ -161,35 +255,411 @@ Paired_site_NColl<-mclapply(1:3, function(i){
            thin=thin,
            prior=ps_prior)
 }, mc.cores=3)
+c<-list(Paired_site_Ccarb_plots[[1]]$Sol,Paired_site_Ccarb_plots[[2]]$Sol,Paired_site_Ccarb_plots[[3]]$Sol)
+d<-list(log(Paired_site_Ccarb_plots[[1]]$VCV),log(Paired_site_Ccarb_plots[[2]]$VCV),log(Paired_site_Ccarb_plots[[3]]$VCV))
+#Plot to console
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+```
+Save to file
+```{r}
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.5, scale=TRUE, file="PairedSites_Carbon_Fixed.pdf")
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.5, file="PairedSites_Carbon_residual.pdf")
+rm(a,b,c,d)
+```
+Plot difference in TimePeriods for Carbon plot
+```{r}
+b<-Paired_site_Ccarb_plots[[1]] %>%
+  emmeans(~TimePeriod, data=paired) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{13} ~"Ccarb")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Pairedsite_Ccarbon_modelout.pdf",width = 7, height = 5)
+rm(b)
+```
+Model check plots and posterior predictive checks - NDY
+"A simple QQplot of the posterior density of parameter estimates (estimated from our MCMC sampling) versus a normal distribution will have diagnostic power analogous to analyzing residuals."
+Check 'residuals for normality' in bayesian-like with with qqplots: NDY
+```{r}
+set.seed(245)
+norm<-rnorm(2000,0,1)
+predict.MCMCglmm(Paired_site_NColl[[1]])
+plot(paired$TimePeriod,paired$d15Ncoll)
+hist(xsim)
+```
+Compute summary statistics and perform convergence checks across the 3 chains - NDY:
+```{r}
+Paired_site_NColl <- lapply(Paired_site_NColl, function(m) m$Sol)
+Paired_site_NColl <- do.call(mcmc.list, Paired_site_NColl)
+convergence_checks_max<-list(gelman.diag(Paired_site_NColl),
+                         gelman.diag(Paired_site_CColl),
+                         gelman.diag(Paired_site_Ccarb))
+rm(paired)
+```
+#TimePeriod all-sites model - without Sisak - Nitrogen
+Nitrogen Model
+```{r}
+WS<-df[!df$Site=="Sisak",]
+WS<-WS[complete.cases(WS$d15Ncoll),]
+ggplot(WS,aes(y=d15Ncoll,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ncoll")) + theme(legend.position = "none")
+
+Max_prior<-list(B = list(mu= diag(2)*0, V=diag(2)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(10)*1, nu = 0.02, alpha.mu = rep(0,10), alpha.V = diag(10)*1000)))
+#Alt + Sex + dist_from_Coast
+Max_Nitrogen<- mclapply(1:3, function(i) {
+  MCMCglmm(d15Ncoll~Sex,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+a<-c(paste("DIC for all-sites NColl is:"),round(mean(c(Max_Nitrogen[[1]]$DIC,Max_Nitrogen[[2]]$DIC,
+                                                    Max_Nitrogen[[3]]$DIC)),digits=2))
+print(a)
+
+b<-c(paste("Mean Deviance for all-sites NColl is:"),round(mean(c(Max_Nitrogen[[1]]$Deviance,Max_Nitrogen[[2]]$Deviance,
+                                                    Max_Nitrogen[[3]]$Deviance)),digits=2))
+print(b)
+```
+Plot MCMC traceplots, save as files, remove intercept to make plots easier for reader to interpret
+```{r}
+Max_prior<-list(B = list(mu= diag(3)*0, V=diag(3)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(10)*1, nu = 0.02, alpha.mu = rep(0,10), alpha.V = diag(10)*1000)))
+
+Max_Nitrogen_plots<- mclapply(1:3, function(i) {
+  MCMCglmm(d15Ncoll~TimePeriod + Sex-1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+c<-list(Max_Nitrogen_plots[[1]]$Sol,Max_Nitrogen_plots[[2]]$Sol,Max_Nitrogen_plots[[3]]$Sol)
+d<-list(log(Max_Nitrogen_plots[[1]]$VCV),log(Max_Nitrogen_plots[[2]]$VCV),log(Max_Nitrogen_plots[[3]]$VCV))
+#Plot to console
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.5, scale=TRUE, file="AllSites_NS_Nitrogen_Fixed.pdf")
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.5, file="AllSites_NS_Nitrogen_random.pdf")
+rm(a,b,c,d)
+```
+#TimePeriod all-sites model - without Sisak -Carbon of bone collagen
+```{r}
+WS<-df[!df$Site=="Sisak",]
+WS<-WS[complete.cases(WS$d13Ccoll),]
+ggplot(WS,aes(y=d13Ccoll,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ncoll")) + theme(legend.position = "none")
+
+Max_prior<-list(B = list(mu= diag(2)*0, V=diag(2)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(10)*1, nu = 0.02, alpha.mu = rep(0,10), alpha.V = diag(10)*1000)))
+
+Max_Carbon<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccoll~TimePeriod,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+a<-c(paste("DIC for all-sites CColl is:"),round(mean(c(Max_Carbon[[1]]$DIC,Max_Carbon[[2]]$DIC,
+                                                    Max_Carbon[[3]]$DIC)),digits=2))
+print(a)
+
+b<-c(paste("Mean Deviance for all-sites CColl is:"),round(mean(c(Max_Carbon[[1]]$Deviance,Max_Carbon[[2]]$Deviance,
+                                                    Max_Carbon[[3]]$Deviance)),digits=2))
+print(b)
+```
+Plots 
+```{r}
+Max_Carbon_plots<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccoll~TimePeriod-1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+c<-list(Max_Carbon_plots[[1]]$Sol,Max_Carbon_plots[[2]]$Sol,Max_Carbon_plots[[3]]$Sol)
+d<-list(log(Max_Carbon_plots[[1]]$VCV),log(Max_Carbon_plots[[2]]$VCV),log(Max_Carbon_plots[[3]]$VCV))
+#Plot to console
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.5, scale=TRUE, file="AllSites_NS_Carbon_Fixed.pdf")
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.5, file="AllSites_NS_Carbon_random.pdf")
+rm(a,b,c,d)
+```
+```{r}
+b<-Max_Carbon_plots[[1]] %>%
+  emmeans(~TimePeriod, data=WS) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{13} ~"Ccoll")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Allsites_NS_carbon_modelout.pdf",width = 6, height = 2.5)
+rm(a,b)
 ```
 
-#TimePeriod model
+#TimePeriod all-sites model - without Sisak -Carbon of carbonate
+```{r}
+WS<-df[!df$Site=="Sisak",]
+WS<-WS[complete.cases(WS$d13Ccarb),]
+ggplot(WS,aes(y=d13Ccarb,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{13} ~"Ccarb")) + theme(legend.position = "none")
+
+Max_prior<-list(B = list(mu= diag(2)*0, V=diag(2)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(6)*1, nu = 0.02, alpha.mu = rep(0,6), alpha.V = diag(6)*1000)))
+
+Max_Ccarb<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccarb~TimePeriod,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+a<-c(paste("DIC for all-sites Ccarb is:"),round(mean(c(Max_Ccarb[[1]]$DIC,Max_Ccarb[[2]]$DIC,
+                                                    Max_Ccarb[[3]]$DIC)),digits=2))
+print(a)
+
+b<-c(paste("Mean Deviance for all-sites Ccarb is:"),round(mean(c(Max_Ccarb[[1]]$Deviance,Max_Ccarb[[2]]$Deviance,
+                                                    Max_Ccarb[[3]]$Deviance)),digits=2))
+print(b)
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.5, scale=TRUE, file="AllSites_NS_CCarb_Fixed.pdf")
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.5, file="AllSites_NS_CCarb_random.pdf")
+rm(a,b,c,d)
+```
+Plot MCMC traceplots, save as files, remove intercept to make plots easier for reader to interpret
+```{r}
+Max_prior<-list(B = list(mu= diag(2)*0, V=diag(2)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(10)*1, nu = 0.02, alpha.mu = rep(0,10), alpha.V = diag(10)*1000)))
+
+Max_Ccarb_plots<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccarb~TimePeriod-1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=WS,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+c<-list(Max_Ccarb_plots[[1]]$Sol,Max_Ccarb_plots[[2]]$Sol,Max_Ccarb_plots[[3]]$Sol)
+d<-list(log(Max_Ccarb_plots[[1]]$VCV),log(Max_Ccarb_plots[[2]]$VCV),log(Max_Ccarb_plots[[3]]$VCV))
+#Plot to console
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+```
+Plots
+```{r}
+b<-Max_Carbon_plots[[1]] %>%
+  emmeans(~TimePeriod, data=WS) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{13} ~"Ccoll")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Allsites_NS_carbon_modelout.pdf",width = 6, height = 2.5)
+rm(a,b)
+```
+#TimePeriod all-sites models - with Sisak - Nitrogen
+Nitrogen Model
+```{r}
+ALL<-df[complete.cases(df$d15Ncoll),]
+ggplot(ALL,aes(y=d15Ncoll,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ncoll")) + theme(legend.position = "none")
+Max_prior<-list(B = list(mu= diag(1)*0, V=diag(1)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(11)*1, nu = 0.02, alpha.mu = rep(0,11), alpha.V = diag(11)*1000)))
+#Alt + Sex + dist_from_Coast
+Max_Nitrogen_b<- mclapply(1:3, function(i) {
+  MCMCglmm(d15Ncoll~1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=ALL,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+a<-c(paste("DIC for all-sites NColl is:"),round(mean(c(Max_Nitrogen_b[[1]]$DIC,Max_Nitrogen_b[[2]]$DIC,
+                                                    Max_Nitrogen_b[[3]]$DIC)),digits=2))
+print(a)
+
+b<-c(paste("Mean Deviance for all-sites NColl is:"),round(mean(c(Max_Nitrogen_b[[1]]$Deviance,Max_Nitrogen_b[[2]]$Deviance,
+                                                    Max_Nitrogen_b[[3]]$Deviance)),digits=2))
+print(b)
+```
+Plot MCMC traceplots, save as files, remove intercept to make plots easier for reader to interpret
+```{r}
+Max_prior<-list(B = list(mu= diag(3)*0, V=diag(3)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(11)*1, nu = 0.02, alpha.mu = rep(0,11), alpha.V = diag(11)*1000)))
+
+Max_Nitrogen_plots_b<- mclapply(1:3, function(i) {
+  MCMCglmm(d15Ncoll~TimePeriod + Sex-1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=ALL,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+c<-list(Max_Nitrogen_plots_b[[1]]$Sol,Max_Nitrogen_plots_b[[2]]$Sol,Max_Nitrogen_plots_b[[3]]$Sol)
+d<-list(log(Max_Nitrogen_plots_b[[1]]$VCV),log(Max_Nitrogen_plots_b[[2]]$VCV),log(Max_Nitrogen_plots_b[[3]]$VCV))
+chainsPlot(c, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(d, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+```
+```{r}
+b<-Max_Nitrogen_plots_b[[1]] %>%
+  emmeans(~TimePeriod, data=ALL) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{15} ~"Ncoll")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Allsites_Sis_Nitrogen_modelout.pdf",width = 6.5, height = 2)
+rm(a,b)
+```
+```{r}
+Max_prior<-list(B = list(mu= diag(2)*0, V=diag(2)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(11)*1, nu = 0.02, alpha.mu = rep(0,11), alpha.V = diag(11)*1000)))
+
+Max_Nitrogen_plots_b2<- mclapply(1:3, function(i) {
+  MCMCglmm(d15Ncoll~Sex-1,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=ALL,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+e<-list(Max_Nitrogen_plots_b2[[1]]$Sol,Max_Nitrogen_plots_b2[[2]]$Sol,Max_Nitrogen_plots_b2[[3]]$Sol)
+f<-list(log(Max_Nitrogen_plots_b2[[1]]$VCV),log(Max_Nitrogen_plots_b2[[2]]$VCV),log(Max_Nitrogen_plots_b2[[3]]$VCV))
+#Plot to console
+chainsPlot(e, densityplot=TRUE,legend.location = 'topleft', cex = 1.8, scale=TRUE)
+```
+```{r}
+chainsPlot(f, densityplot=FALSE,legend.location = 'topleft', cex = 1.8)
+```
+```{r}
+b<-Max_Nitrogen_plots_b2[[1]] %>%
+  emmeans(~Sex, data=ALL) %>%
+  contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>%
+  ggplot(aes(x=.value, y= contrast)) +
+  stat_eyeh(.width=c(.95,.8)) + labs(y="",x=expression(Delta ~ delta^{15} ~"Ncoll")) + theme_classic() +
+  theme(axis.text = element_text(size=12, family="Helvetica"),
+        axis.title = element_text(size=12, family="Helvetica"))
+b
+ggsave(plot=b,filename="Allsites_Sis_Nitrogen_modelout_2.pdf",width = 6, height = 2.5)
+rm(b)
+```
+#TimePeriod all-sites models - with Sisak - Carbon of bone collagen 
+```{r}
+ALL<-df[complete.cases(df$d13Ccoll),]
+ggplot(ALL,aes(y=d13Ccoll,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ncoll")) + theme(legend.position = "none")
+
+Max_prior<-list(B = list(mu= diag(4)*0, V=diag(4)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(11)*1, nu = 0.02, alpha.mu = rep(0,11), alpha.V = diag(11)*1000)))
+
+Max_Carbon<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccoll~TimePeriod*Sex,
+           ~ idh(Site),
+           rcov=~ units, 
+           family="gaussian",
+           data=ALL,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+```
+#TimePeriod all-sites models - with Sisak - Carbon carbonate
+```{r}
+ALL<-df[!df$Site=="Sisak",]
+ALL<-ALL[complete.cases(ALL$d13Ccarb),]
+ggplot(ALL,aes(y=d13Ccarb,x=TimePeriod,fill=TimePeriod)) + geom_boxplot() + geom_jitter() + labs(y=expression(Delta ~ delta^{15} ~"Ccarb")) + theme(legend.position = "none")
+
+Max_prior<-list(B = list(mu= diag(4)*0, V=diag(4)*1e+10),
+                  R = list(nu=0.002, V=1),
+                  G = list(G1 = list(V = diag(10)*1, nu = 0.02, alpha.mu = rep(0,10), alpha.V = diag(10)*1000)))
+
+Max_Ccarbon_b<- mclapply(1:3, function(i) {
+  MCMCglmm(d13Ccarb~TimePeriod + Alt + Sex + dist_from_Coast,
+           ~ idh(name),
+           rcov=~ units, 
+           family="gaussian",
+           data=ALL,
+           nitt=nitt,
+           burnin=burnin,
+           thin=thin,
+           prior=Max_prior)
+}, mc.cores=3)
+```
+#Inter-Site model
 Table 1
 ```{r}
 
 ```
-#Site model
-Table 1
-```{r}
-
-```
-#Plots
 Table 1
 ```{r}
 
 ```
 
-#Variances - Levene's test
-
-```{r}
-
-```
-## Including Plots
-
-You can also embed plots, for example:
+# Remove non-needed items and save models as Rdata
+Remove all non-needed items
 
 ```{r pressure, echo=FALSE}
-plot(pressure)
+rm(a,b,c,d)
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
