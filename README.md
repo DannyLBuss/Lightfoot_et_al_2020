@@ -7,7 +7,7 @@
 
 ###Running mcmcGLMM analyses - code checklist
 - [x] Tidy up model code
-- [ ] Upload traceplots
+- [x] Upload traceplots
 - [ ] Upload posterior distributions for each model
 - [ ] Finalise and upload DIC summary tables
 - [ ] Provide prior information and explain in sufficient detail 
